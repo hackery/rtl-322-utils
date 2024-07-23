@@ -21,14 +21,14 @@ import socket
 #from graphyte import Sender
 
 log = mp.log_to_stderr()  # Multiprocessing capable logger
-mqtt_client = mqtt.Client("RTL_433_CarbonCache")
 exitevent = threading.Event()
 
 # rtl_433 emits both individual key/value pairs for each reading, and a JSON event string -
 # we use just the latter, with the existing parser.
 
 MQTT_SERVER = "localhost"
-MQTT_TOPIC = "rtl_433/%s/events" % platform.node()
+# MQTT_TOPIC = "rtl_433/%s/events" % platform.node()
+MQTT_TOPIC = "rtl_433/+/events"
 
 # Config for sending to Carbon-Cache
 CARBON_HOST = "localhost"
@@ -105,17 +105,18 @@ class CarbonSender:
 
 class MqttReceiver:
     def __init__(self):
-        #mqtt_client.on_connect = on_connect
-        mqtt_client.on_connect = lambda *args: self.on_connect(*args)
-        mqtt_client.on_disconnect = lambda *args: self.on_disconnect(*args)
-        mqtt_client.on_message = lambda *args: self.on_message(*args)
+        self.mqtt_client = mqtt.Client("RTL_433_CarbonCache")
+        self.mqtt_client.on_connect = lambda *args: self.on_connect(*args)
+        self.mqtt_client.on_disconnect = lambda *args: self.on_disconnect(*args)
+
+        self.mqtt_client.message_callback_add(MQTT_TOPIC, lambda *args: self.on_message(*args))
 
     def run(self):
         # self.sender = Sender(CARBON_HOST, prefix=CARBON_PREFIX, log_sends=True)
         self.sender = CarbonSender()
 
-        mqtt_client.connect(MQTT_SERVER)
-        mqtt_client.loop_start()
+        self.mqtt_client.connect(MQTT_SERVER)
+        self.mqtt_client.loop_start()
         exitevent.wait()
 
     def on_connect(self, client, userdata, flags, rc):
@@ -134,20 +135,19 @@ class MqttReceiver:
 
 
     def on_message(self, client, userdata, msg):
-        if msg.topic == MQTT_TOPIC:
-            log.debug("topic %s : %s", msg.topic, msg.payload.decode())
-            try:
-                message = json.loads(msg.payload.decode())
-            except json.decoder.JSONDecodeError:
-                log.warning("JSON decode error: %s", msg.payload.decode())
-                return
-            except Exception as e:
-                log.warning("Some error: %s", e)
-                return
+        log.debug("topic %s : %s", msg.topic, msg.payload.decode())
+        try:
+            message = json.loads(msg.payload.decode())
+        except json.decoder.JSONDecodeError:
+            log.warning("JSON decode error: %s", msg.payload.decode())
+            return
+        except Exception as e:
+            log.warning("Some error: %s", e)
+            return
 
-            #log.info(pprint.pformat(message))
-            #log.info("Message time: %s", message['time'])
-            self.parse(message)
+        #log.info(pprint.pformat(message))
+        #log.info("Message time: %s", message['time'])
+        self.parse(message)
 
     def send(self, metric, value, time):
         # now = int(time.time())
@@ -163,51 +163,24 @@ class MqttReceiver:
                model = re.sub(r"^(Oregon|Fineoffset|LaCrosse)-", "", model, flags=re.IGNORECASE)
                model = re.sub(r"^CurrentCost.TX", "currentcost",     model, flags=re.IGNORECASE)
 
+# Typical message looks like:
+# {"time":"2023-11-06 11:40:15","brand":"OS","model":"Oregon-BTHGN129","id":114,"channel":1,"battery_ok":1,"temperature_C":18.1,"humidity":69,"pressure_hPa":995.0}
+
                for attr in set(message) - { 'time', 'brand', 'model', 'id', 'channel' }:
                    if type(message[attr]) in [int,float]:
-                       self.send("encironment.%s.%s.%s" % (model, message['id'], attr), message[attr], time)
+                       self.send("environment.%s.%s.%s" % (model, message['id'], attr), message[attr], time)
+
+               # some special cases for backward compatibility:
 
                if re.search("CurrentCost.TX", message['model']):
                    self.send("currentcost.power0",      message['power0_W'], time)  ###
                    self.send("currentcost.%d.power0" %  message['id'], message['power0_W'], time)  ###
-
-               if re.search("THGR810", message['model']):
-                   self.send("environment.thgr810.%s.temperature_C"  % message['id'], message['temperature_C'], time)
-                   self.send("environment.thgr810.%s.humidity"       % message['id'], message['humidity'],      time)
-                   self.send("environment.thgr810.%s.battery_ok"     % message['id'], message['battery_ok'],    time)
-
-               if re.search("THGR122N", message['model']):
-                   self.send("environment.thgr122n.%s.temperature_C" % message['id'], message['temperature_C'], time)
-                   self.send("environment.thgr122n.%s.humidity"      % message['id'], message['humidity'],      time)
-                   self.send("environment.thgr122n.%s.battery_ok"    % message['id'], message['battery_ok'],    time)
-
-               if re.search("PCR800", message['model']):
-                   self.send("environment.pcr800.%s.rain_rate_in_h"  % message['id'], message['rain_rate_in_h'], time)
-                   self.send("environment.pcr800.%s.rain_in"         % message['id'], message['rain_in'],        time)
-                   self.send("environment.pcr800.%s.battery_ok"      % message['id'], message['battery_ok'],     time)
 
                if re.search("WGR800", message['model']):
                    self.send("environment.wgr800.%s.average"         % message['id'], message['wind_avg_m_s'], time)  ###
                    self.send("environment.wgr800.%s.gust"            % message['id'], message['wind_max_m_s'], time)  ###
                    self.send("environment.wgr800.%s.direction"       % message['id'], message['wind_dir_deg'], time)  ###
                    self.send("environment.wgr800.%s.battery_ok"      % message['id'], message['battery_ok'],   time)
-
-# {"time":"2023-11-06 11:40:15","brand":"OS","model":"Oregon-BTHGN129","id":114,"channel":1,"battery_ok":1,"temperature_C":18.1,"humidity":69,"pressure_hPa":995.0}
-               if re.search("BTHGN129", message['model']):
-                   self.send("environment.bthgn129.%s.temperature_C" % message['id'], message['temperature_C'], time)
-                   self.send("environment.bthgn129.%s.humidity"      % message['id'], message['humidity'],      time)
-                   self.send("environment.bthgn129.%s.pressure_hPa"  % message['id'], message['pressure_hPa'],  time)
-                   self.send("environment.bthgn129.%s.battery_ok"    % message['id'], message['battery_ok'],    time)
-
-               if re.search("Fineoffset-WH51", message['model']):
-                   self.send("environment.wh51.%s.battery_ok"        % message['id'], message['battery_ok'], time)
-                   self.send("environment.wh51.%s.battery_mV"        % message['id'], message['battery_mV'], time)
-                   self.send("environment.wh51.%s.moisture"          % message['id'], message['moisture'],   time)
-
-               if re.search("LaCrosse-TX141THBv2", message['model']):
-                   self.send("environment.tx141.%s.battery_ok"        % message['id'], message['battery_ok'],    time)
-                   self.send("environment.tx141.%s.temperature_C"     % message['id'], message['temperature_C'], time)
-                   self.send("environment.tx141.%s.humidity"          % message['id'], message['humidity'],      time)
 
         except KeyError as e:
           log.error("Key error: %s", e)
