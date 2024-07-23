@@ -1,0 +1,20 @@
+[Unit]
+Description=rtl_433
+
+[Service]
+Type=simple
+User=rtlsdr
+Group=rtlsdr
+# Load env vars from /etc/default/ and /etc/sysconfig/ if they exist.
+# Prefixing the path with '-' makes it try to load, but if the file doesn't
+# exist, it continues onward.
+EnvironmentFile=-/etc/default/rtlsdr
+EnvironmentFile=-/etc/sysconfig/rtlsdr
+ExecStart=/usr/local/bin/rtl_433 -F mqtt
+Restart=always
+WorkingDirectory=/tmp
+Nice=19
+LimitNOFILE=16384
+
+[Install]
+WantedBy=multi-user.target
