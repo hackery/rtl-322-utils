@@ -32,7 +32,7 @@ MQTT_TOPIC = "rtl_433/%s/events" % platform.node()
 
 # Config for sending to Carbon-Cache
 CARBON_HOST = "localhost"
-CARBON_PORT = 12003
+CARBON_PORT = 2003
 #CARBON_PREFIX = "rtl_433"
 
 SENDER_QUEUE_BACKOFF_MIN = 1
@@ -52,7 +52,7 @@ class CarbonSender:
         self.t = threading.Thread(target=lambda *args: self.drain_queue(*args)).start()
         
     def send(self, metric, value, timestamp):
-        message = "xxx.{0} {1} {2}".format(metric, value, timestamp)
+        message = "{0} {1} {2}".format(metric, value, timestamp)
         self._send(message)
 
     def _send(self, message):
@@ -61,7 +61,7 @@ class CarbonSender:
                 self.s = socket.create_connection( (self.host,self.port) )
                 log.info("Connected to %s", self.host)
             except ConnectionRefusedError:
-                log.error("Connection to Carbon-Cache refused")
+                pass # do not log it, could be high volume. Logging first failure would be better.
 
         if self.s is not None: # connected, or reconnected
             try:
@@ -72,17 +72,17 @@ class CarbonSender:
                 self.s = None
 
         if self.s is None: # did not connect, or did and then failed to send
-            log.info("[Q+] %s", message)
+            log.debug("[Q+] %s", message)
             self.q.put(message)
             return False
 
         return True
 
     def drain_queue(self):
-        log.info("Drain queue start")
+        log.debug("Drain queue start")
         while True:
             message = self.q.get() # blocks until available
-            log.info("[Q-] %s", message)
+            log.debug("[Q-] %s", message)
             # Figure out how to re-send message safely:
             # send() will re-queue, and if we don't have a delay,
             # we immediately re-read, you want 100% cpu eh?
@@ -121,7 +121,7 @@ class MqttReceiver:
     def on_connect(self, client, userdata, flags, rc):
         if rc != 0:
             log.error("Could not connect: %d", rc)
-            exitevent.set()
+            exitevent.set() # do we exit here? or will the paho client retry?
 
         log.info("Connected to MQTT: %s", mqtt.connack_string(rc))
         log.info("Subscribing to topic %s", MQTT_TOPIC)
@@ -150,9 +150,9 @@ class MqttReceiver:
             self.parse(message)
 
     def send(self, metric, value, time):
-          # now = int(time.time())
-          print("{} {} {}".format(metric, value, time))
-          self.sender.send(metric, value, time)
+        # now = int(time.time())
+        log.debug("{} {} {}".format(metric, value, time))
+        self.sender.send(metric, value, time)
 
     def parse(self, message):
         try:
@@ -165,23 +165,23 @@ class MqttReceiver:
                if re.search("THGR810", message['model']):
                    self.send("environment.thgr810.%s.temperature_C"  % message['id'], message['temperature_C'], time)
                    self.send("environment.thgr810.%s.humidity"       % message['id'], message['humidity'],      time)
-                   self.send("environment.thgr810.%s.battery_ok"     % message['id'], message['battery_ok'] == "OK", time)
+                   self.send("environment.thgr810.%s.battery_ok"     % message['id'], message['battery_ok'],    time)
 
                if re.search("THGR122N", message['model']):
                    self.send("environment.thgr122n.%s.temperature_C" % message['id'], message['temperature_C'], time)
                    self.send("environment.thgr122n.%s.humidity"      % message['id'], message['humidity'],      time)
-                   self.send("environment.thgr122n.%s.battery_ok"    % message['id'], message['battery_ok'] == "OK", time)
+                   self.send("environment.thgr122n.%s.battery_ok"    % message['id'], message['battery_ok'],    time)
 
                if re.search("PCR800", message['model']):
                    self.send("environment.pcr800.%s.rain_rate_in_h"  % message['id'], message['rain_rate_in_h'], time)
                    self.send("environment.pcr800.%s.rain_in"         % message['id'], message['rain_in'],        time)
-                   self.send("environment.pcr800.%s.battery_ok"      % message['id'], message['battery_ok'] == "OK", time)
+                   self.send("environment.pcr800.%s.battery_ok"      % message['id'], message['battery_ok'],     time)
 
                if re.search("WGR800", message['model']):
                    self.send("environment.wgr800.%s.average"         % message['id'], message['wind_avg_m_s'], time)
                    self.send("environment.wgr800.%s.gust"            % message['id'], message['wind_max_m_s'], time)
                    self.send("environment.wgr800.%s.direction"       % message['id'], message['wind_dir_deg'], time)
-                   self.send("environment.wgr800.%s.battery_ok"      % message['id'], message['battery_ok'] == "OK", time)
+                   self.send("environment.wgr800.%s.battery_ok"      % message['id'], message['battery_ok'],   time)
 
                if re.search("Fineoffset-WH51", message['model']):
                    self.send("environment.wh51.%s.battery_ok"        % message['id'], message['battery_ok'], time)
