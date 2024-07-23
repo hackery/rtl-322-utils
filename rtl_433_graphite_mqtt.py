@@ -156,11 +156,20 @@ class MqttReceiver:
 
     def parse(self, message):
         try:
-            if all(attr in message for attr in ['time', 'model']):
+            if all(attr in message for attr in ['time', 'model', 'id']):
                time = dp.parse(message['time']).strftime("%s")
+
+               model = message['model'].strip().lower()
+               model = re.sub(r"^(Oregon|Fineoffset|LaCrosse)-", "", model, flags=re.IGNORECASE)
+               model = re.sub(r"^CurrentCost.TX", "currentcost",     model, flags=re.IGNORECASE)
+
+               for attr in set(message) - { 'time', 'brand', 'model', 'id', 'channel' }:
+                   if type(message[attr]) in [int,float]:
+                       self.send("encironment.%s.%s.%s" % (model, message['id'], attr), message[attr], time)
+
                if re.search("CurrentCost.TX", message['model']):
-                   self.send("currentcost.power0",      message['power0_W'], time)
-                   self.send("currentcost.%d.power0" %  message['id'], message['power0_W'], time)
+                   self.send("currentcost.power0",      message['power0_W'], time)  ###
+                   self.send("currentcost.%d.power0" %  message['id'], message['power0_W'], time)  ###
 
                if re.search("THGR810", message['model']):
                    self.send("environment.thgr810.%s.temperature_C"  % message['id'], message['temperature_C'], time)
@@ -178,15 +187,27 @@ class MqttReceiver:
                    self.send("environment.pcr800.%s.battery_ok"      % message['id'], message['battery_ok'],     time)
 
                if re.search("WGR800", message['model']):
-                   self.send("environment.wgr800.%s.average"         % message['id'], message['wind_avg_m_s'], time)
-                   self.send("environment.wgr800.%s.gust"            % message['id'], message['wind_max_m_s'], time)
-                   self.send("environment.wgr800.%s.direction"       % message['id'], message['wind_dir_deg'], time)
+                   self.send("environment.wgr800.%s.average"         % message['id'], message['wind_avg_m_s'], time)  ###
+                   self.send("environment.wgr800.%s.gust"            % message['id'], message['wind_max_m_s'], time)  ###
+                   self.send("environment.wgr800.%s.direction"       % message['id'], message['wind_dir_deg'], time)  ###
                    self.send("environment.wgr800.%s.battery_ok"      % message['id'], message['battery_ok'],   time)
+
+# {"time":"2023-11-06 11:40:15","brand":"OS","model":"Oregon-BTHGN129","id":114,"channel":1,"battery_ok":1,"temperature_C":18.1,"humidity":69,"pressure_hPa":995.0}
+               if re.search("BTHGN129", message['model']):
+                   self.send("environment.bthgn129.%s.temperature_C" % message['id'], message['temperature_C'], time)
+                   self.send("environment.bthgn129.%s.humidity"      % message['id'], message['humidity'],      time)
+                   self.send("environment.bthgn129.%s.pressure_hPa"  % message['id'], message['pressure_hPa'],  time)
+                   self.send("environment.bthgn129.%s.battery_ok"    % message['id'], message['battery_ok'],    time)
 
                if re.search("Fineoffset-WH51", message['model']):
                    self.send("environment.wh51.%s.battery_ok"        % message['id'], message['battery_ok'], time)
                    self.send("environment.wh51.%s.battery_mV"        % message['id'], message['battery_mV'], time)
                    self.send("environment.wh51.%s.moisture"          % message['id'], message['moisture'],   time)
+
+               if re.search("LaCrosse-TX141THBv2", message['model']):
+                   self.send("environment.tx141.%s.battery_ok"        % message['id'], message['battery_ok'],    time)
+                   self.send("environment.tx141.%s.temperature_C"     % message['id'], message['temperature_C'], time)
+                   self.send("environment.tx141.%s.humidity"          % message['id'], message['humidity'],      time)
 
         except KeyError as e:
           log.error("Key error: %s", e)
